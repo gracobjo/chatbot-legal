@@ -97,9 +97,17 @@ app = FastAPI(title="Despacho Legal Chatbot", version="1.0.0")
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:5173")],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://experimento2-fenm.vercel.app",
+        "https://experimento2-production.up.railway.app",
+        "https://chatbot-legal-production-b91c.up.railway.app",
+        "https://chatbot-legal-production.up.railway.app",
+        os.getenv("FRONTEND_URL", "http://localhost:5173")
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -1287,6 +1295,23 @@ threading.Thread(target=cleanup_inactive_sessions, daemon=True).start()
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "chatbot", "timestamp": datetime.now().isoformat()}
+
+@app.get("/test-cors")
+async def test_cors():
+    return {"message": "CORS test successful", "timestamp": datetime.now().isoformat()}
+
+@app.options("/chat")
+async def chat_options():
+    from fastapi.responses import Response
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "https://experimento2-fenm.vercel.app",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn
