@@ -38,33 +38,34 @@ try:
 except ImportError:
     print("[NLP] sentence-transformers no disponible")
 
-# Verificar servicios en la nube
+# Verificar servicios en la nube (opcionales)
 CLOUD_SERVICES_AVAILABLE = {
     "openai": False,
     "anthropic": False,
     "cohere": False
 }
 
+# Importar servicios de IA en la nube (opcionales)
 try:
     import openai
     CLOUD_SERVICES_AVAILABLE["openai"] = True
     print("[NLP] OpenAI disponible")
 except ImportError:
-    print("[NLP] OpenAI no disponible")
+    print("[NLP] OpenAI no disponible - instalar con: pip install openai")
 
 try:
-    import anthropic
+    import anthropic  # type: ignore
     CLOUD_SERVICES_AVAILABLE["anthropic"] = True
     print("[NLP] Anthropic disponible")
 except ImportError:
-    print("[NLP] Anthropic no disponible")
+    print("[NLP] Anthropic no disponible - instalar con: pip install anthropic")
 
 try:
     import cohere
     CLOUD_SERVICES_AVAILABLE["cohere"] = True
     print("[NLP] Cohere disponible")
 except ImportError:
-    print("[NLP] Cohere no disponible")
+    print("[NLP] Cohere no disponible - instalar con: pip install cohere")
 
 # Cargar variables de entorno
 load_dotenv()
@@ -75,7 +76,7 @@ print(f"[DEBUG] HF_API_TOKEN loaded: {bool(HF_API_TOKEN)}")
 HF_API_URL = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
 
 # Configuración del backend
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3000")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://experimento2-production.up.railway.app")
 
 # Descargar recursos necesarios de NLTK
 nltk.download('punkt', quiet=True)
@@ -95,13 +96,57 @@ except OSError:
 app = FastAPI(title="Despacho Legal Chatbot", version="1.0.0")
 
 # Configurar CORS
+cors_origins = os.getenv("CORS_ORIGIN")
+if cors_origins:
+    # Si existe CORS_ORIGIN, dividir por comas y usar esos dominios
+    allowed_origins = [origin.strip() for origin in cors_origins.split(",")]
+    print(f"[CORS] Configurando con dominios: {allowed_origins}")
+else:
+    # Fallback a dominios por defecto
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://experimento2-fenm.vercel.app",
+        "https://experimento2-production.up.railway.app",
+        "https://experimento2-production-54c0.up.railway.app",
+        "https://chatbot-legal-production-b91c.up.railway.app",
+        "https://chatbot-legal-production.up.railway.app",
+        os.getenv("FRONTEND_URL", "http://localhost:5173")
+    ]
+    print(f"[CORS] Usando dominios por defecto: {allowed_origins}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:5173")],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Endpoint OPTIONS general para todas las rutas
+@app.options("/{full_path:path}")
+async def options_handler(request: Request, full_path: str):
+    from fastapi.responses import Response
+    
+    # Obtener el origen de la petición
+    origin = request.headers.get("origin", "")
+    
+    # Verificar si el origen está permitido
+    if origin in allowed_origins:
+        cors_origin = origin
+    else:
+        # Si no está en la lista, usar el primer origen permitido como fallback
+        cors_origin = allowed_origins[0] if allowed_origins else "*"
+    
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": cors_origin,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
 
 class Message(BaseModel):
     text: str
@@ -396,17 +441,32 @@ def get_appointment_links():
     }
 
 def extract_age(text: str) -> Optional[int]:
-    """Extrae edad del texto"""
+    """Extrae edad del texto con validación estricta"""
     try:
-        # Buscar números entre 1 y 120
+        # Limpiar el texto y buscar solo números
         import re
-        numbers = re.findall(r'\b(\d{1,3})\b', text)
+        # Buscar números que estén solos (no parte de otros números)
+        numbers = re.findall(r'\b(\d{1,3})\b', text.strip())
+        
+        # Si hay múltiples números, tomar el primero que sea válido
         for num in numbers:
             age = int(num)
-            if 1 <= age <= 120:
+            # Validación estricta: solo edades entre 18 y 100
+            if 18 <= age <= 100:
                 return age
-    except:
+        
+        # Si no se encontró una edad válida, verificar si el texto es solo un número
+        text_clean = text.strip()
+        if text_clean.isdigit():
+            age = int(text_clean)
+            if 18 <= age <= 100:
+                return age
+            else:
+                return None  # Edad fuera del rango válido
+                
+    except (ValueError, TypeError):
         pass
+    
     return None
 
 def extract_phone(text: str) -> Optional[str]:
@@ -441,8 +501,8 @@ def get_available_dates():
     dates = []
     base_date = datetime.now()
     
-    # Generar fechas para los próximos 7 días, solo días laborables
-    for i in range(1, 15):
+    # Generar fechas para los próximos 15 días, solo días laborables
+    for i in range(1, 16):
         date = base_date + timedelta(days=i)
         if date.weekday() < 5:  # Lunes a Viernes (0-4)
             # Generar horarios diferentes para cada día
@@ -451,12 +511,14 @@ def get_available_dates():
                 appointment_date = date.replace(hour=hour, minute=0, second=0, microsecond=0)
                 dates.append(appointment_date)
     
-    return dates[:10]  # Limitar a 10 opciones
+    return dates[:8]  # Limitar a 8 opciones (más manejable)
 
 def handle_appointment_conversation(user_id: str, message: str) -> str:
     """Maneja la conversación de agendar citas"""
     conv = active_conversations[user_id]
     text_lower = message.lower().strip()
+    
+    print(f"[DEBUG] Appointment conversation - Stage: {conv.stage}, Message: '{message}', Data: {conv.data}")
     
     # Etapa inicial - detectar si quiere agendar cita
     if conv.stage == "initial":
@@ -481,11 +543,21 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
         
         elif conv.data['age'] is None:
             age = extract_age(message)
+            print(f"[DEBUG] Age extraction - Input: '{message}', Extracted age: {age}")
             if age:
                 conv.data['age'] = age
                 return "Perfecto. ¿Cuál es tu número de teléfono de contacto?"
             else:
-                return "Por favor, proporciona tu edad (solo el número)."
+                # Mensaje más específico según el tipo de error
+                text_clean = message.strip()
+                if text_clean.isdigit():
+                    age_value = int(text_clean)
+                    if age_value < 18:
+                        return "Debes ser mayor de edad (18 años o más) para agendar una cita. Por favor, proporciona tu edad real."
+                    elif age_value > 100:
+                        return "Por favor, proporciona una edad válida (entre 18 y 100 años)."
+                else:
+                    return "Por favor, proporciona tu edad (solo el número, entre 18 y 100 años)."
         
         elif conv.data['phone'] is None:
             phone = extract_phone(message)
@@ -526,11 +598,11 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
                 conv.context['available_dates'] = available_dates
                 
                 date_options = []
-                for i, date in enumerate(available_dates[:5], 1):
+                for i, date in enumerate(available_dates, 1):
                     date_str = date.strftime("%A %d de %B a las %H:%M")
                     date_options.append(f"• {i}. {date_str}")
                 
-                return f"Perfecto. ¿Qué fecha prefieres para tu consulta?\n\nOpciones disponibles:\n" + "\n".join(date_options) + "\n\nResponde con el número de la opción que prefieras."
+                return f"Perfecto. ¿Qué fecha prefieres para tu consulta?\n\nOpciones disponibles:\n" + "\n".join(date_options) + f"\n\nResponde con el número de la opción que prefieras (1-{len(available_dates)})."
             else:
                 return "Por favor, describe el motivo de tu consulta con más detalle."
         
@@ -538,15 +610,31 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
             try:
                 date_index = int(message.strip()) - 1
                 available_dates = conv.context.get('available_dates', [])
+                print(f"[DEBUG] Date selection - Input: '{message}', Parsed index: {date_index}, Available dates count: {len(available_dates)}")
+                
                 if 0 <= date_index < len(available_dates):
                     selected_date = available_dates[date_index]
                     conv.data['preferredDate'] = selected_date.isoformat() + "Z"
                     conv.stage = "confirmation"
                     return create_confirmation_message(conv.data)
                 else:
-                    return "Por favor, responde con el número de la opción que prefieras."
+                    # Mostrar las opciones disponibles nuevamente
+                    date_options = []
+                    for i, date in enumerate(available_dates, 1):
+                        date_str = date.strftime("%A %d de %B a las %H:%M")
+                        date_options.append(f"• {i}. {date_str}")
+                    
+                    return f"Por favor, selecciona una opción válida (1-{len(available_dates)}):\n\n" + "\n".join(date_options)
             except ValueError:
-                return "Por favor, responde con el número de la opción que prefieras."
+                print(f"[DEBUG] Date selection - Invalid input: '{message}'")
+                # Mostrar las opciones disponibles nuevamente
+                available_dates = conv.context.get('available_dates', [])
+                date_options = []
+                for i, date in enumerate(available_dates, 1):
+                    date_str = date.strftime("%A %d de %B a las %H:%M")
+                    date_options.append(f"• {i}. {date_str}")
+                
+                return f"Por favor, responde con el número de la opción (1-{len(available_dates)}):\n\n" + "\n".join(date_options)
     
     # Confirmación
     elif conv.stage == "confirmation":
@@ -1287,6 +1375,36 @@ threading.Thread(target=cleanup_inactive_sessions, daemon=True).start()
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "chatbot", "timestamp": datetime.now().isoformat()}
+
+@app.get("/test-cors")
+async def test_cors():
+    return {
+        "message": "CORS test successful", 
+        "timestamp": datetime.now().isoformat(),
+        "cors_origins": os.getenv("CORS_ORIGIN", "No configurado"),
+        "allowed_origins": allowed_origins,
+        "backend_url": os.getenv("BACKEND_URL", "No configurado"),
+        "frontend_url": os.getenv("FRONTEND_URL", "No configurado"),
+        "cors_middleware_active": True
+    }
+
+@app.get("/debug-cors")
+async def debug_cors():
+    return {
+        "status": "CORS Debug Info",
+        "timestamp": datetime.now().isoformat(),
+        "environment_variables": {
+            "CORS_ORIGIN": os.getenv("CORS_ORIGIN", "No configurado"),
+            "BACKEND_URL": os.getenv("BACKEND_URL", "No configurado"),
+            "FRONTEND_URL": os.getenv("FRONTEND_URL", "No configurado")
+        },
+        "cors_configuration": {
+            "allowed_origins": allowed_origins,
+            "middleware_active": True,
+            "total_origins": len(allowed_origins)
+        },
+        "current_origin_check": "Verificar que tu dominio esté en allowed_origins"
+    }
 
 if __name__ == "__main__":
     import uvicorn
