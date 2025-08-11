@@ -54,11 +54,16 @@ except ImportError:
     print("[NLP] OpenAI no disponible - instalar con: pip install openai")
 
 try:
-    import anthropic  # type: ignore
-    CLOUD_SERVICES_AVAILABLE["anthropic"] = True
-    print("[NLP] Anthropic disponible")
-except ImportError:
-    print("[NLP] Anthropic no disponible - instalar con: pip install anthropic")
+    # Use a more robust import pattern
+    anthropic = None
+    try:
+        import anthropic
+        CLOUD_SERVICES_AVAILABLE["anthropic"] = True
+        print("[NLP] Anthropic disponible")
+    except ImportError:
+        print("[NLP] Anthropic no disponible - instalar con: pip install anthropic")
+except Exception as e:
+    print(f"[NLP] Error importando Anthropic: {e}")
 
 try:
     import cohere
@@ -76,7 +81,7 @@ print(f"[DEBUG] HF_API_TOKEN loaded: {bool(HF_API_TOKEN)}")
 HF_API_URL = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"
 
 # Configuración del backend
-BACKEND_URL = os.getenv("BACKEND_URL", "https://experimento2-production.up.railway.app")
+BACKEND_URL = os.getenv("BACKEND_URL", "https://experimento2-production-54c0.up.railway.app")
 CHATBOT_URL = os.getenv("CHATBOT_URL", "https://chatbot-legal-production-b91c.up.railway.app")
 
 # Descargar recursos necesarios de NLTK
@@ -108,7 +113,6 @@ else:
         "http://localhost:5173",
         "http://localhost:3000",
         "https://experimento2-fenm.vercel.app",
-        "https://experimento2-production.up.railway.app",
         "https://experimento2-production-54c0.up.railway.app",
         "https://chatbot-legal-production-b91c.up.railway.app",
         "https://chatbot-legal-production.up.railway.app",
