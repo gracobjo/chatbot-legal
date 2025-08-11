@@ -77,6 +77,7 @@ HF_API_URL = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7
 
 # Configuración del backend
 BACKEND_URL = os.getenv("BACKEND_URL", "https://experimento2-production.up.railway.app")
+CHATBOT_URL = os.getenv("CHATBOT_URL", "https://chatbot-legal-production-b91c.up.railway.app")
 
 # Descargar recursos necesarios de NLTK
 nltk.download('punkt', quiet=True)
@@ -544,7 +545,7 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
         elif conv.data['age'] is None:
             age = extract_age(message)
             print(f"[DEBUG] Age extraction - Input: '{message}', Extracted age: {age}")
-            if age:
+            if age and age >= 18:
                 conv.data['age'] = age
                 return "Perfecto. ¿Cuál es tu número de teléfono de contacto?"
             else:
@@ -618,13 +619,13 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
                     conv.stage = "confirmation"
                     return create_confirmation_message(conv.data)
                 else:
-                    # Mostrar las opciones disponibles nuevamente
+                    # Mostrar las opciones disponibles nuevamente con mensaje de error claro
                     date_options = []
                     for i, date in enumerate(available_dates, 1):
                         date_str = date.strftime("%A %d de %B a las %H:%M")
                         date_options.append(f"• {i}. {date_str}")
                     
-                    return f"Por favor, selecciona una opción válida (1-{len(available_dates)}):\n\n" + "\n".join(date_options)
+                    return f"❌ **Opción no válida**: Has seleccionado la opción {date_index + 1}, pero solo hay {len(available_dates)} opciones disponibles.\n\nPor favor, selecciona una opción válida (1-{len(available_dates)}):\n\n" + "\n".join(date_options)
             except ValueError:
                 print(f"[DEBUG] Date selection - Invalid input: '{message}'")
                 # Mostrar las opciones disponibles nuevamente
@@ -634,7 +635,7 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
                     date_str = date.strftime("%A %d de %B a las %H:%M")
                     date_options.append(f"• {i}. {date_str}")
                 
-                return f"Por favor, responde con el número de la opción (1-{len(available_dates)}):\n\n" + "\n".join(date_options)
+                return f"❌ **Entrada no válida**: '{message}' no es un número válido.\n\nPor favor, responde con el número de la opción (1-{len(available_dates)}):\n\n" + "\n".join(date_options)
     
     # Confirmación
     elif conv.stage == "confirmation":
@@ -642,7 +643,12 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
             # Guardar cita en backend
             try:
                 print(f"[DEBUG] Intentando crear cita con datos: {conv.data}")
-                response = requests.post(f"{BACKEND_URL}/api/appointments/visitor", json=conv.data, timeout=10)
+                
+                # Usar la URL correcta del backend
+                appointment_url = f"{BACKEND_URL}/api/appointments/visitor"
+                print(f"[DEBUG] URL de cita: {appointment_url}")
+                
+                response = requests.post(appointment_url, json=conv.data, timeout=15)
                 print(f"[DEBUG] Respuesta del backend: {response.status_code} - {response.text}")
                 
                 if response.status_code == 201:
@@ -650,13 +656,24 @@ def handle_appointment_conversation(user_id: str, message: str) -> str:
                     del active_conversations[user_id]  # Limpiar conversación
                     preferred_date = conv.data['preferredDate']
                     if isinstance(preferred_date, str):
-                        date_str = preferred_date[:10]
+                        try:
+                            from datetime import datetime
+                            date_obj = datetime.fromisoformat(preferred_date.replace('Z', '+00:00'))
+                            date_str = date_obj.strftime("%A %d de %B a las %H:%M")
+                        except:
+                            date_str = preferred_date[:10]
                     else:
                         date_str = "Fecha no especificada"
-                    return f"¡Perfecto! Tu cita ha sido agendada exitosamente.\n\n📅 **Detalles de tu cita:**\n• Nombre: {conv.data['fullName']}\n• Fecha: {date_str}\n• Motivo: {conv.data['consultationReason']}\n\nTe hemos enviado un email de confirmación a {conv.data['email']}.\n\nUn abogado se pondrá en contacto contigo pronto para confirmar los detalles. ¡Gracias por confiar en nosotros!"
+                    return f"¡Perfecto! Tu cita ha sido agendada exitosamente.\n\n📅 **Detalles de tu cita:**\n• Nombre: {conv.data['fullName']}\n• Fecha y hora: {date_str}\n• Motivo: {conv.data['consultationReason']}\n\nTe hemos enviado un email de confirmación a {conv.data['email']}.\n\nUn abogado se pondrá en contacto contigo pronto para confirmar los detalles. ¡Gracias por confiar en nosotros!"
                 else:
                     print(f"[DEBUG] Error del backend: {response.status_code} - {response.text}")
                     return f"Lo siento, hubo un problema al agendar tu cita (Error {response.status_code}). Por favor, contacta directamente al despacho por teléfono o email."
+            except requests.exceptions.ConnectionError as e:
+                print(f"[DEBUG] Error de conexión: {e}")
+                return f"Lo siento, no se pudo conectar con el sistema de citas. Por favor, contacta directamente al despacho por teléfono o email."
+            except requests.exceptions.Timeout as e:
+                print(f"[DEBUG] Error de timeout: {e}")
+                return f"Lo siento, la conexión con el sistema de citas tardó demasiado. Por favor, contacta directamente al despacho por teléfono o email."
             except Exception as e:
                 print(f"[DEBUG] Error saving appointment: {e}")
                 return f"Lo siento, hubo un problema al agendar tu cita (Error: {str(e)}). Por favor, contacta directamente al despacho por teléfono o email."
@@ -674,7 +691,13 @@ def create_confirmation_message(data: Dict[str, Any]) -> str:
     """Crea mensaje de confirmación con los datos recopilados"""
     preferred_date = data['preferredDate']
     if isinstance(preferred_date, str):
-        date_str = preferred_date[:10]
+        try:
+            # Convertir la fecha ISO a un objeto datetime para formatear correctamente
+            from datetime import datetime
+            date_obj = datetime.fromisoformat(preferred_date.replace('Z', '+00:00'))
+            date_str = date_obj.strftime("%A %d de %B a las %H:%M")
+        except:
+            date_str = preferred_date[:10]
     else:
         date_str = "Fecha no especificada"
     
@@ -689,7 +712,7 @@ def create_confirmation_message(data: Dict[str, Any]) -> str:
 ⚖️ **Consulta:**
 • Motivo: {data['consultationReason']}
 • Área: {data['consultationType']}
-• Fecha preferida: {date_str}
+• Fecha y hora: {date_str}
 
 ¿Está todo correcto? Responde 'sí' para confirmar o 'no' para empezar de nuevo."""
 
@@ -1372,6 +1395,48 @@ def cleanup_inactive_sessions():
 
 threading.Thread(target=cleanup_inactive_sessions, daemon=True).start()
 
+@app.get("/test-backend-connection")
+async def test_backend_connection():
+    """Prueba la conectividad con el backend"""
+    try:
+        # Probar conexión con el endpoint de citas
+        test_url = f"{BACKEND_URL}/api/appointments/visitor"
+        print(f"[DEBUG] Probando conexión con: {test_url}")
+        
+        response = requests.get(f"{BACKEND_URL}/health", timeout=10)
+        if response.status_code == 200:
+            return {
+                "status": "success",
+                "message": "Conexión exitosa con el backend",
+                "backend_url": BACKEND_URL,
+                "chatbot_url": CHATBOT_URL,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "warning",
+                "message": f"Backend responde pero con estado {response.status_code}",
+                "backend_url": BACKEND_URL,
+                "chatbot_url": CHATBOT_URL,
+                "timestamp": datetime.now().isoformat()
+            }
+    except requests.exceptions.ConnectionError as e:
+        return {
+            "status": "error",
+            "message": f"Error de conexión con el backend: {str(e)}",
+            "backend_url": BACKEND_URL,
+            "chatbot_url": CHATBOT_URL,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error inesperado: {str(e)}",
+            "backend_url": BACKEND_URL,
+            "chatbot_url": CHATBOT_URL,
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "chatbot", "timestamp": datetime.now().isoformat()}
@@ -1396,7 +1461,8 @@ async def debug_cors():
         "environment_variables": {
             "CORS_ORIGIN": os.getenv("CORS_ORIGIN", "No configurado"),
             "BACKEND_URL": os.getenv("BACKEND_URL", "No configurado"),
-            "FRONTEND_URL": os.getenv("FRONTEND_URL", "No configurado")
+            "FRONTEND_URL": os.getenv("FRONTEND_URL", "No configurado"),
+            "CHATBOT_URL": os.getenv("CHATBOT_URL", "No configurado")
         },
         "cors_configuration": {
             "allowed_origins": allowed_origins,
