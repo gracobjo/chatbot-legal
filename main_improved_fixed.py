@@ -42,7 +42,7 @@ except ImportError:
 CLOUD_SERVICES_AVAILABLE = {
     "openai": False,
     "anthropic": False,
-    "cohere": False
+    "cohere": False  # Comentado temporalmente
 }
 
 # Importar servicios de IA en la nube (opcionales)
@@ -65,12 +65,12 @@ try:
 except Exception as e:
     print(f"[NLP] Error importando Anthropic: {e}")
 
-try:
-    import cohere
-    CLOUD_SERVICES_AVAILABLE["cohere"] = True
-    print("[NLP] Cohere disponible")
-except ImportError:
-    print("[NLP] Cohere no disponible - instalar con: pip install cohere")
+# try:
+#     import cohere
+#     CLOUD_SERVICES_AVAILABLE["cohere"] = True
+#     print("[NLP] Cohere disponible")
+# except ImportError:
+#     print("[NLP] Cohere no disponible - instalar con: pip install cohere")
 
 # Cargar variables de entorno
 load_dotenv()
